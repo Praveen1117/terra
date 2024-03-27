@@ -1,0 +1,175 @@
+<<<<<< https://cscontents.com/jenkins-high-availability/#How_to_make_Jenkins_highly_available >>>>>
+
+
+
+Jenkins High Availability (HA) – Explanation with Failover
+In our Jenkins High Availability architecture –
+
+HAProxy – It will be at frontend. We will be using HAProxy IP to access the Jenkins dashboard from browser.
+Jenkins – Two instance of Jenkins will be configured as backend. One of them will be in Active mode & other one will be in passive mode. Basically, it will be Active-Passive model.
+We will have below –
+
+Jenkins 1 – Active Jenkins instance, HAProxy will always send traffic to this instance as long as it is up & running.
+
+Jenkins 2 – Passive Jenkins instance, HAProxy will send traffic to this instance only when Jenkins 1 is down.
+
+Below is a simple diagram which explains our Jenkins High Availability or Jenkins HA architecture.
+
+
+Jenkins High Availability (HA) – implementation guide
+Below is the step-by-step guide –
+
+Step 1: Install two instances of Jenkins on two separate machines
+In this tutorial we are using two RHEL machines where we will install Jenkins. You need to execute below commands one by one.
+
+
+sudo wget -O /etc/yum.repos.d/jenkins.repo
+
+sudo rpm --import https://pkg.jenkins.io/redhat-stable/jenkins.io.key
+sudo yum upgrade
+sudo yum install java-11-openjdk
+sudo yum install jenkins
+sudo systemctl daemon-reload
+sudo systemctl start jenkins
+sudo systemctl status jenkins
+
+If you have Linux machine of other flavor like ubuntu, centos etc. then please head over to below article for Jenkins installation.
+Once you complete the Jenkins installation come back here.
+
+Once you see both the Jenkins instance up & running, open your browser and check whether the URL of both the Jenkins are accessible or not. Jenkins URL is in below format.
+
+http://<IP_address_of_your_machine>:8080 
+
+Note: Port 8080 should be allowed in your machine network. Inbound rule should be added with port 8080.
+
+
+Step 2: Mount the NAS drive in both Jenkins machine
+In step 1, we have installed two instances of Jenkins on two separate machines. Now, we need to mount a NAS drive at /var/lib/jenkins/job directory on both the machine.
+This is because all the jenkins job related configuration & build information are stored in the /var/lib/jenkins/job directory.
+
+
+Step 3: Install HAProxy
+In this step we will install HAProxy on a different machine. In our case we will be using one Ubuntu machine where HAProxy will be installed.
+
+Execute the below commands.
+
+sudo apt update
+
+sudo apt install haproxy
+
+Step 4: Configure HAProxy to point to the Jenkins instances
+To configure HAProxy we need to edit the /etc/haproxy/haproxy.cfg file.
+
+Open the /etc/haproxy/haproxy.cfg file by running below command.
+
+sudo vi /etc/haproxy/haproxy.cfg
+
+Once you open the haproxy.cfg file, delete or remove all the content from this file.
+
+Now copy & paste the below content in the haproxy.cfg file and edit the IP address of jenkins1 & jenkins 2 (enter your IPs).
+
+
+defaults
+    mode                    http
+    log                     global
+    option                  httplog
+    option                  dontlognull
+    option http-server-close
+    option forwardfor       except 127.0.0.0/8
+    option                  redispatch
+    retries                 3
+    timeout http-request    10s
+    timeout queue           1m
+    timeout connect         10s
+    timeout client          1m
+    timeout server          1m
+    timeout http-keep-alive 10s
+    timeout check           10s
+    maxconn                 3000
+
+#---------------------------------------------------------------------
+# main frontend which proxys to the backends
+#---------------------------------------------------------------------
+frontend main
+    bind *:80
+    default_backend jenkins_servers
+       reqadd X-Forwarded-Proto:\ http
+    
+backend jenkins_servers
+       server jenkins1 45.228.89.101:8080 check
+       server jenkins2 80.201.179.58:8080 check backup
+
+
+NOte: Port 80 should be allowed in your machine network. Inbound rule should be added with port 80.
+Your HAProxy machine should be able to communicate with both Jenkins instance over port 8080. Also,
+both Jenkins instance should allow inbound communication from the HAProxy machine.
+
+
+Step 5: Start the HAProxy
+Now, start the HAProxy by running below command.
+
+systemctl start haproxy
+
+/// Check the status of HAProxy,
+
+systemctl status haproxy
+
+
+Step 6: Add a Cron Job in Jenkins-2 to Reload
+Though we are using one NAS drive to sync the job related data between the two Jenkins instance. But if we create/edit any job in the dashboard of Jenkins-1, that change or edit would not be automatically reflected in the dashboard of Jenkins-2. To reflect those changes, we need to reload the Jenkins 2.
+
+There are few ways through which we can reload any Jenkins instance –
+
+
+From browser if we hit this URL → http://<Jenkins_machine_IP>:8080/reload, it would be reloaded.
+From the Jenkins machine CLI, if we run this command, curl -u user:api_token http://<Jenkins_machine_IP>:8080/reload, it will be reloaded.
+If we restart the Jenkins instance then also it gets reloaded.
+We will follow the second approach (point number 2) to reload Jenkins-2, and we need to reload it every time when we do any change in Jenkins-1.
+
+To avoid the manual reloading of Jenkins-2, we would create one cron job in Jenkins-2 which will run a shell script every 1 min to reload it. Now,
+to reload Jenkins using the above-mentioned curl command we need a user & API token.
+
+Below are the steps which you can follow –
+
+
+Step 6.1: Create an API Token
+You need to create an API token for the Jenkins user which will be used for reloading the Jenkins instance using curl command.
+
+Once you log into Jenkins dashboard, in the top right corner you would see the username and with that you would see a dropdown.
+
+Click on that dropdown.
+In the dropdown, you would see ‘Configure’ option, click on that ‘Configure’ option
+
+Once you open the above-mentioned ‘Configure’ page, you need to create an API Token there. Copy & paste the API token in any notepad
+
+Step 6.2: Create a Shell Script
+Now we will create a shell script. In our case we will create the shell script in /root directory. You may create in any other place also. Execute the below commands.
+
+vi jenkins(name).sh
+
+Copy & paste the below content (replace the user & API token with your details).
+
+#!/bin/bash
+curl -X POST http://localhost:8080/(name) -u admin:11nh69f9065929u3a83a65abe3ba78dfbg  <<<<<Token id...
+
+
+Step 6.3: Create a Cron Job
+In this step we will create a cron job to run the above shell script every 1 min. Execute the below commands.
+
+sudo vi /etc/cron.d/jenkins_reload
+Copy & Paste the below content.
+
+*/1 * * * * root /bin/bash /root/jenkins_reload.sh
+
+
+Save the file
+
+Step 7: Access the HAProxy URL from browser
+Finally, we can access our highly available Jenkins instances through the HAProxy IP address or HAProxy URL (if DNS is configured). Basically,
+you need to access the below URL from browser.
+
+
+http://haproxy_ip_address:80
+
+Note: Jenkins instances should be up & running. If any one of them is down then also we will be use Jenkins since we have two Jenkins instance.
+
